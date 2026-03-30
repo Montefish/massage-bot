@@ -29,7 +29,7 @@ ADMIN_BOT_TOKEN   = os.environ.get("ADMIN_BOT_TOKEN")
 ADMIN_CHAT_ID     = int(os.environ.get("ADMIN_CHAT_ID", "0"))
 ADMIN_MINIAPP_URL = os.environ.get("ADMIN_MINIAPP_URL")
 SHEET_ID          = os.environ.get("SHEET_ID")
-ADMIN_API_PORT    = int(os.environ.get("ADMIN_API_PORT", "8081"))
+ADMIN_API_PORT    = int(os.environ.get("PORT", os.environ.get("ADMIN_API_PORT", "8081")))
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
