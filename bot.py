@@ -443,6 +443,35 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+async def send_reminders_2h(context: ContextTypes.DEFAULT_TYPE):
+    """Напоминание за 2 часа до сеанса — запускается каждые 30 минут."""
+    now = datetime.now()
+    target = now + timedelta(hours=2)
+    target_date = target.strftime("%d.%m.%Y")
+    target_time = target.strftime("%H:%M")
+    try:
+        sh = get_sheets()
+        bookings_sheet = sh.worksheet("Записи")
+        records = bookings_sheet.get_all_records()
+        for booking in records:
+            if (booking.get("дата") == target_date
+                    and str(booking.get("время")) == target_time
+                    and booking.get("статус_записи") == "подтверждено"):
+                try:
+                    await context.bot.send_message(
+                        chat_id=int(booking["telegram_id"]),
+                        text=f"⏰ *Напоминание*\n\n"
+                             f"Через 2 часа у вас массаж у Наталии:\n"
+                             f"💆 {booking['услуга']}\n"
+                             f"🕐 {booking['время']}\n\n"
+                             f"Ждём вас!",
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send 2h reminder to {booking['telegram_id']}: {e}")
+    except Exception as e:
+        logger.error(f"Error in send_reminders_2h: {e}")
+
 async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
     tomorrow = (datetime.now() + timedelta(days=1)).strftime("%d.%m.%Y")
     try:
@@ -483,7 +512,8 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
 
     job_queue = app.job_queue
-    job_queue.run_daily(send_reminders, time=datetime.strptime("09:00", "%H:%M").time())
+    job_queue.run_daily(send_reminders, time=datetime.strptime("20:00", "%H:%M").time())
+    job_queue.run_repeating(send_reminders_2h, interval=1800, first=10)  # каждые 30 минут
 
     logger.info("Bot started")
     app.run_polling()
