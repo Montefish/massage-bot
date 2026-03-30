@@ -82,12 +82,12 @@ def get_available_slots():
         for row in records:
             if row.get("статус") == "свободно":
                 try:
-                    slot_date = datetime.strptime(row["дата"], "%d.%m.%Y").date()
+                    slot_date = datetime.strptime(str(row["дата"]), "%d.%m.%Y").date()
                     if slot_date >= today:
                         slots.append({
                             "id": row.get("id"),
                             "date": row["дата"],
-                            "time": row["время"],
+                            "time": str(row["время"]),
                             "status": row["статус"]
                         })
                 except:
@@ -96,6 +96,35 @@ def get_available_slots():
     except Exception as e:
         logger.error(f"Error getting slots: {e}")
         return []
+
+def get_week_slots():
+    """Возвращает слоты на ближайшие 7 дней, сгруппированные по дате."""
+    try:
+        sh = get_sheets()
+        schedule_sheet = sh.worksheet("Расписание")
+        records = schedule_sheet.get_all_records()
+        today = datetime.now().date()
+        week_end = today + timedelta(days=7)
+        grouped = {}
+        for row in records:
+            if row.get("статус") == "свободно":
+                try:
+                    slot_date = datetime.strptime(str(row["дата"]), "%d.%m.%Y").date()
+                    if today <= slot_date <= week_end:
+                        key = row["дата"]
+                        if key not in grouped:
+                            grouped[key] = []
+                        grouped[key].append(str(row["время"]))
+                except:
+                    continue
+        # Сортируем по дате
+        sorted_grouped = {}
+        for k in sorted(grouped.keys(), key=lambda d: datetime.strptime(d, "%d.%m.%Y")):
+            sorted_grouped[k] = sorted(grouped[k])
+        return sorted_grouped
+    except Exception as e:
+        logger.error(f"Error getting week slots: {e}")
+        return {}
 
 def get_prices_for_status(status: str):
     prices = {
@@ -138,7 +167,7 @@ def save_booking(telegram_id: int, client_name: str, service: str, date: str, ti
 
         records = schedule_sheet.get_all_records()
         for i, row in enumerate(records):
-            if row["дата"] == date and row["время"] == time and row["статус"] == "свободно":
+            if row["дата"] == date and str(row["время"]) == time and row["статус"] == "свободно":
                 schedule_sheet.update_cell(i + 2, 4, "занято")
                 break
 
@@ -212,7 +241,7 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
                  f"💆 {service}\n"
                  f"📅 {date} в {time}\n"
                  f"💰 {price:,} дин.\n"
-                 f"🔖 #{booking_id}",
+                 f"📋 ID: `{booking_id}`",
             parse_mode="Markdown"
         )
 
@@ -284,6 +313,36 @@ async def admin_slots(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "*Свободные слоты:*\n\n"
     for s in slots[:20]:
         text += f"• {s['date']} {s['time']}\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def admin_week_slots(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает свободные слоты на ближайшие 7 дней, сгруппированные по дате."""
+    if not await admin_check(update):
+        return
+
+    grouped = get_week_slots()
+
+    if not grouped:
+        await update.message.reply_text(
+            "На ближайшие 7 дней свободных слотов нет.\n\n"
+            "Добавьте слоты командой: /addslot ДД.ММ.ГГГГ ЧЧ:ММ"
+        )
+        return
+
+    DAYS_RU = {0: "Пн", 1: "Вт", 2: "Ср", 3: "Чт", 4: "Пт", 5: "Сб", 6: "Вс"}
+    text = "*📅 Расписание на 7 дней:*\n\n"
+    for date_str, times in grouped.items():
+        try:
+            dt = datetime.strptime(date_str, "%d.%m.%Y")
+            day_name = DAYS_RU[dt.weekday()]
+            times_str = "  ".join(times)
+            text += f"*{date_str}* ({day_name})\n{times_str}\n\n"
+        except:
+            text += f"*{date_str}*\n{'  '.join(times)}\n\n"
+
+    total = sum(len(t) for t in grouped.values())
+    text += f"_Всего свободных слотов: {total}_"
+
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def admin_clients(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -361,7 +420,7 @@ async def admin_close_slot(update: Update, context: ContextTypes.DEFAULT_TYPE):
         schedule_sheet = sh.worksheet("Расписание")
         records = schedule_sheet.get_all_records()
         for i, row in enumerate(records):
-            if row["дата"] == date_str and row["время"] == time_str:
+            if row["дата"] == date_str and str(row["время"]) == time_str:
                 schedule_sheet.update_cell(i + 2, 4, "закрыто")
                 await update.message.reply_text(f"✅ Слот закрыт: {date_str} в {time_str}")
                 return
@@ -374,7 +433,8 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(
         "*Команды мастера:*\n\n"
-        "/slots — свободные слоты\n"
+        "/slots — все свободные слоты\n"
+        "/weekslots — слоты на ближайшие 7 дней\n"
         "/clients — список клиентов\n"
         "/addslot 15.04.2026 10:00 — добавить слот\n"
         "/closeslot 15.04.2026 10:00 — закрыть слот\n"
@@ -413,6 +473,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", admin_help))
     app.add_handler(CommandHandler("slots", admin_slots))
+    app.add_handler(CommandHandler("weekslots", admin_week_slots))   # ← НОВОЕ
     app.add_handler(CommandHandler("clients", admin_clients))
     app.add_handler(CommandHandler("setstatus", admin_set_status))
     app.add_handler(CommandHandler("addslot", admin_add_slot))
