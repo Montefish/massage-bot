@@ -536,7 +536,7 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
 
     job_queue = app.job_queue
-    job_queue.run_daily(send_reminders, time=datetime.strptime("09:00", "%H:%M").time())
+    job_queue.run_daily(send_reminders, time=datetime.strptime("20:00", "%H:%M").time())
     job_queue.run_repeating(send_reminders_2h, interval=1800, first=10)  # каждые 30 минут
 
     logger.info("Bot started")
