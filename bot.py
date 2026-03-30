@@ -233,6 +233,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     data = json.loads(update.effective_message.web_app_data.data)
+    logger.info(f"WebApp data received: {data}")
 
     client = get_client_info(user.id)
     status = client.get("статус", "новый") if client else "новый"
@@ -243,7 +244,9 @@ async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE)
     time = data.get("time")
     price = prices.get(service, 0)
 
+    logger.info(f"Saving booking: user={user.id}, service={service}, date={date}, time={time}, price={price}")
     booking_id = save_booking(user.id, user.full_name, service, date, time, price)
+    logger.info(f"Booking result: {booking_id}")
 
     await update.message.reply_text(
         f"✅ *Запись подтверждена!*\n\n"
@@ -536,7 +539,7 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
 
     job_queue = app.job_queue
-    job_queue.run_daily(send_reminders, time=datetime.strptime("20:00", "%H:%M").time())
+    job_queue.run_daily(send_reminders, time=datetime.strptime("09:00", "%H:%M").time())
     job_queue.run_repeating(send_reminders_2h, interval=1800, first=10)  # каждые 30 минут
 
     logger.info("Bot started")
