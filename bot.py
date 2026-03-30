@@ -4,9 +4,16 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppI
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 import gspread
 from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
 from datetime import datetime, timedelta
 import json
+
+# Примечание: googleapiclient используется только для /setupsheet
+# Если нужна эта команда — добавьте google-api-python-client в requirements.txt
+try:
+    from googleapiclient.discovery import build as _build_sheets
+    _SHEETS_API_AVAILABLE = True
+except ImportError:
+    _SHEETS_API_AVAILABLE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,12 +37,11 @@ def get_sheets():
     return spreadsheet
 
 def get_sheets_service():
-    """Возвращает (spreadsheet через gspread, sheets_service через googleapiclient)."""
-    creds_json = os.environ.get("GOOGLE_CREDS_JSON")
-    creds_dict = json.loads(creds_json)
+    if not _SHEETS_API_AVAILABLE:
+        raise ImportError("google-api-python-client не установлен. Добавьте его в requirements.txt")
+    creds_dict = json.loads(os.environ.get("GOOGLE_CREDS_JSON"))
     creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-    service = build("sheets", "v4", credentials=creds)
-    return service
+    return _build_sheets("sheets", "v4", credentials=creds)
 
 def setup_schedule_formatting():
     """
