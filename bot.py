@@ -4,6 +4,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppI
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 import gspread
 from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
 from datetime import datetime, timedelta
 import json
 
@@ -27,6 +28,118 @@ def get_sheets():
     client = gspread.authorize(creds)
     spreadsheet = client.open_by_key(SHEET_ID)
     return spreadsheet
+
+def get_sheets_service():
+    """Возвращает (spreadsheet через gspread, sheets_service через googleapiclient)."""
+    creds_json = os.environ.get("GOOGLE_CREDS_JSON")
+    creds_dict = json.loads(creds_json)
+    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+    service = build("sheets", "v4", credentials=creds)
+    return service
+
+def setup_schedule_formatting():
+    """
+    Настраивает лист «Расписание»:
+    - Выпадающий список в столбце D (статус): «свободно» / «занято»
+    - Условное форматирование: синий фон для «свободно», красный для «занято»
+    Применяется ко всем строкам данных (2–1000), не затрагивая заголовок.
+    """
+    try:
+        service = get_sheets_service()
+        spreadsheet = service.spreadsheets().get(spreadsheetId=SHEET_ID).execute()
+
+        # Находим sheetId листа «Расписание»
+        sheet_id = None
+        for sheet in spreadsheet.get("sheets", []):
+            if sheet["properties"]["title"] == "Расписание":
+                sheet_id = sheet["properties"]["sheetId"]
+                break
+        if sheet_id is None:
+            return False, "Лист «Расписание» не найден"
+
+        # Диапазон: столбец D (индекс 3), строки 2–1000
+        range_d = {
+            "sheetId": sheet_id,
+            "startRowIndex": 1,      # строка 2 (0-based)
+            "endRowIndex": 1000,
+            "startColumnIndex": 3,   # столбец D
+            "endColumnIndex": 4
+        }
+
+        requests = [
+            # 1. Выпадающий список в столбце D
+            {
+                "setDataValidation": {
+                    "range": range_d,
+                    "rule": {
+                        "condition": {
+                            "type": "ONE_OF_LIST",
+                            "values": [
+                                {"userEnteredValue": "свободно"},
+                                {"userEnteredValue": "занято"}
+                            ]
+                        },
+                        "showCustomUi": True,   # показывать как dropdown
+                        "strict": True
+                    }
+                }
+            },
+            # 2. Синий фон для «свободно»
+            {
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [range_d],
+                        "booleanRule": {
+                            "condition": {
+                                "type": "TEXT_EQ",
+                                "values": [{"userEnteredValue": "свободно"}]
+                            },
+                            "format": {
+                                "backgroundColor": {"red": 0.23, "green": 0.52, "blue": 0.78},
+                                "textFormat": {
+                                    "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
+                                    "bold": True
+                                }
+                            }
+                        }
+                    },
+                    "index": 0
+                }
+            },
+            # 3. Красный фон для «занято»
+            {
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [range_d],
+                        "booleanRule": {
+                            "condition": {
+                                "type": "TEXT_EQ",
+                                "values": [{"userEnteredValue": "занято"}]
+                            },
+                            "format": {
+                                "backgroundColor": {"red": 0.84, "green": 0.22, "blue": 0.22},
+                                "textFormat": {
+                                    "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0},
+                                    "bold": True
+                                }
+                            }
+                        }
+                    },
+                    "index": 1
+                }
+            }
+        ]
+
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=SHEET_ID,
+            body={"requests": requests}
+        ).execute()
+
+        return True, "Готово"
+    except Exception as e:
+        logger.error(f"Error setup_schedule_formatting: {e}")
+        return False, str(e)
+
 
 def get_client_info(telegram_id: int):
     try:
@@ -482,10 +595,30 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/clients — список клиентов\n"
         "/addslot 15.04.2026 10:00 — добавить слот\n"
         "/closeslot 15.04.2026 10:00 — закрыть слот\n"
-        "/setstatus @username постоянный — изменить статус клиента\n\n"
+        "/cancel 15.04.2026 10:00 — отменить запись и уведомить клиента\n"
+        "/setstatus @username постоянный — изменить статус клиента\n"
+        "/setupsheet — настроить dropdown и цвета в листе Расписание\n\n"
         "_Статусы: новый, постоянный, vip_",
         parse_mode="Markdown"
     )
+
+async def admin_setup_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Настраивает выпадающий список и цветовое форматирование в листе Расписание."""
+    if not await admin_check(update):
+        return
+    await update.message.reply_text("⏳ Настраиваю таблицу, подождите...")
+    ok, msg = setup_schedule_formatting()
+    if ok:
+        await update.message.reply_text(
+            "✅ *Таблица настроена!*\n\n"
+            "В столбце *Статус* листа «Расписание» теперь:\n"
+            "• Выпадающий список: свободно / занято\n"
+            "• 🔵 *Синий* фон — свободно\n"
+            "• 🔴 *Красный* фон — занято",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(f"❌ Ошибка: {msg}")
 
 async def send_reminders_2h(context: ContextTypes.DEFAULT_TYPE):
     """Напоминание за 2 часа до сеанса — запускается каждые 30 минут."""
@@ -540,6 +673,88 @@ async def send_reminders(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in send_reminders: {e}")
 
 
+async def admin_cancel_booking(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отменяет запись, освобождает слот и уведомляет клиента.
+    Использование: /cancel 15.04.2026 10:00
+    """
+    if not await admin_check(update):
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text("Использование: /cancel 15.04.2026 10:00")
+        return
+
+    date_str = context.args[0]
+    time_str = context.args[1]
+
+    try:
+        sh = get_sheets()
+        bookings_sheet = sh.worksheet("Записи")
+        schedule_sheet = sh.worksheet("Расписание")
+
+        # Ищем запись в листе «Записи»
+        records = bookings_sheet.get_all_records()
+        booking_row_index = None
+        booking = None
+        for i, row in enumerate(records):
+            if (str(row.get("дата")) == date_str
+                    and normalize_time(row.get("время", "")) == normalize_time(time_str)
+                    and row.get("статус_записи") == "подтверждено"):
+                booking_row_index = i + 2  # +1 заголовок, +1 нумерация с 1
+                booking = row
+                break
+
+        if not booking:
+            await update.message.reply_text(
+                f"❌ Подтверждённая запись на {date_str} в {time_str} не найдена."
+            )
+            return
+
+        # Меняем статус записи на «отменено»
+        headers = bookings_sheet.row_values(1)
+        status_col = headers.index("статус_записи") + 1
+        bookings_sheet.update_cell(booking_row_index, status_col, "отменено")
+
+        # Освобождаем слот в «Расписании»
+        schedule_records = schedule_sheet.get_all_records()
+        for i, row in enumerate(schedule_records):
+            if (str(row.get("дата")) == date_str
+                    and normalize_time(row.get("время", "")) == normalize_time(time_str)):
+                schedule_sheet.update_cell(i + 2, 4, "свободно")
+                break
+
+        # Уведомляем клиента
+        client_tg_id = booking.get("telegram_id")
+        service = booking.get("услуга", "")
+        try:
+            await context.bot.send_message(
+                chat_id=int(client_tg_id),
+                text=f"❌ *Запись отменена*\n\n"
+                     f"К сожалению, ваша запись была отменена:\n"
+                     f"💆 {service}\n"
+                     f"📅 {date_str} в {time_str}\n\n"
+                     f"Пожалуйста, запишитесь на другое удобное время — нажмите /start.",
+                parse_mode="Markdown"
+            )
+            client_notified = True
+        except Exception as e:
+            logger.error(f"Failed to notify client {client_tg_id}: {e}")
+            client_notified = False
+
+        result_text = (
+            f"✅ *Запись отменена*\n\n"
+            f"📅 {date_str} в {time_str}\n"
+            f"💆 {service}\n"
+            f"👤 {booking.get('имя_клиента', '')}\n\n"
+            f"• Слот возвращён в расписание\n"
+            f"• Клиент {'уведомлён ✅' if client_notified else 'не уведомлён ❌ (возможно заблокировал бота)'}"
+        )
+        await update.message.reply_text(result_text, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"Error cancelling booking: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -551,6 +766,8 @@ def main():
     app.add_handler(CommandHandler("setstatus", admin_set_status))
     app.add_handler(CommandHandler("addslot", admin_add_slot))
     app.add_handler(CommandHandler("closeslot", admin_close_slot))
+    app.add_handler(CommandHandler("setupsheet", admin_setup_sheet))
+    app.add_handler(CommandHandler("cancel", admin_cancel_booking))
     app.add_handler(CallbackQueryHandler(my_bookings, pattern="my_bookings"))
     app.add_handler(CallbackQueryHandler(services_info, pattern="services"))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
