@@ -232,8 +232,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    data = json.loads(update.effective_message.web_app_data.data)
-    logger.info(f"WebApp data received: {data}")
+    try:
+        raw = update.effective_message.web_app_data.data
+        logger.info(f"WebApp raw data: {raw}")
+        data = json.loads(raw)
+        logger.info(f"WebApp data received: {data}")
+    except Exception as e:
+        logger.error(f"Failed to parse WebApp data: {e}")
+        await update.message.reply_text("Ошибка при обработке данных. Попробуйте снова.")
+        return
 
     client = get_client_info(user.id)
     status = client.get("статус", "новый") if client else "новый"
@@ -539,7 +546,7 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
 
     job_queue = app.job_queue
-    job_queue.run_daily(send_reminders, time=datetime.strptime("09:00", "%H:%M").time())
+    job_queue.run_daily(send_reminders, time=datetime.strptime("20:00", "%H:%M").time())
     job_queue.run_repeating(send_reminders_2h, interval=1800, first=10)  # каждые 30 минут
 
     logger.info("Bot started")
