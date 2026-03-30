@@ -3,3 +3,4 @@ gspread==6.0.2
 google-auth==2.27.0
 httpx==0.25.2
 google-api-python-client
+aiohttp
