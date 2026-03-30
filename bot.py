@@ -87,7 +87,7 @@ def get_available_slots():
                         slots.append({
                             "id": row.get("id"),
                             "date": row["дата"],
-                            "time": str(row["время"]),
+                            "time": normalize_time(row["время"]),
                             "status": row["статус"]
                         })
                 except:
@@ -114,7 +114,7 @@ def get_week_slots():
                         key = row["дата"]
                         if key not in grouped:
                             grouped[key] = []
-                        grouped[key].append(str(row["время"]))
+                        grouped[key].append(normalize_time(row["время"]))
                 except:
                     continue
         # Сортируем по дате
@@ -146,6 +146,24 @@ def get_prices_for_status(status: str):
     }
     return prices.get(status.lower(), prices["новый"])
 
+def normalize_time(t) -> str:
+    """Приводит время к формату ЧЧ:ММ независимо от того как его вернул Sheets."""
+    s = str(t).strip()
+    # Если это дробное число (Excel-формат времени: 0.4166... = 10:00)
+    try:
+        f = float(s)
+        total_minutes = round(f * 24 * 60)
+        h = total_minutes // 60
+        m = total_minutes % 60
+        return f"{h:02d}:{m:02d}"
+    except ValueError:
+        pass
+    # Если уже строка вида "10:00" или "10:00:00"
+    parts = s.split(":")
+    if len(parts) >= 2:
+        return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+    return s
+
 def save_booking(telegram_id: int, client_name: str, service: str, date: str, time: str, price: int):
     try:
         sh = get_sheets()
@@ -165,11 +183,17 @@ def save_booking(telegram_id: int, client_name: str, service: str, date: str, ti
             datetime.now().strftime("%d.%m.%Y %H:%M")
         ])
 
+        time_normalized = normalize_time(time)
         records = schedule_sheet.get_all_records()
         for i, row in enumerate(records):
-            if row["дата"] == date and str(row["время"]) == time and row["статус"] == "свободно":
+            row_time = normalize_time(row.get("время", ""))
+            row_date = str(row.get("дата", "")).strip()
+            if row_date == date and row_time == time_normalized and row["статус"] == "свободно":
                 schedule_sheet.update_cell(i + 2, 4, "занято")
+                logger.info(f"Slot marked as занято: {date} {time_normalized}")
                 break
+        else:
+            logger.warning(f"Slot not found for booking: {date} {time_normalized}")
 
         return booking_id
     except Exception as e:
@@ -512,7 +536,7 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_webapp_data))
 
     job_queue = app.job_queue
-    job_queue.run_daily(send_reminders, time=datetime.strptime("20:00", "%H:%M").time())
+    job_queue.run_daily(send_reminders, time=datetime.strptime("09:00", "%H:%M").time())
     job_queue.run_repeating(send_reminders_2h, interval=1800, first=10)  # каждые 30 минут
 
     logger.info("Bot started")
