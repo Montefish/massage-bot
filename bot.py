@@ -1,6 +1,6 @@
 import os
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 import gspread
 from google.oauth2.service_account import Credentials
@@ -209,15 +209,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status = client.get("статус", "новый") if client else "новый"
     prices = get_prices_for_status(status)
 
-    keyboard = [[
-        InlineKeyboardButton(
-            "📅 Записаться",
+    # ReplyKeyboardMarkup + KeyboardButton с web_app — только этот тип поддерживает sendData
+    reply_keyboard = ReplyKeyboardMarkup(
+        [[KeyboardButton(
+            "📅 Записаться на массаж",
             web_app=WebAppInfo(url=f"{MINIAPP_URL}?tid={user.id}&status={status}")
-        )
-    ], [
+        )]],
+        resize_keyboard=True,
+        one_time_keyboard=True
+    )
+
+    inline_keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("📋 Мои записи", callback_data="my_bookings"),
         InlineKeyboardButton("💆 Услуги", callback_data="services")
-    ]]
+    ]])
 
     prices_text = "\n".join([f"• {k} — {v:,} дин.".replace(",", " ") for k, v in prices.items()])
 
@@ -226,8 +231,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Я помогу вам записаться на массаж к Наталии.\n\n"
         f"*Актуальные цены:*\n{prices_text}\n\n"
         f"Нажмите кнопку ниже чтобы выбрать удобное время:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=reply_keyboard,
         parse_mode="Markdown"
+    )
+
+    await update.message.reply_text(
+        "Или используйте:",
+        reply_markup=inline_keyboard
     )
 
 async def handle_webapp_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
