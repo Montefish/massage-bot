@@ -161,6 +161,8 @@ async def handle_admin_api(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return web.json_response({"ok": False, "error": "Invalid JSON"}, headers=headers)
+      
+    logger.info(f"Admin API request: action={body.get('action')}, admin_id={body.get('admin_id')}")
 
     action   = body.get("action")
     admin_id = int(body.get("admin_id", 0))
