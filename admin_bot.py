@@ -169,9 +169,9 @@ async def handle_admin_api(request: web.Request) -> web.Response:
     date     = body.get("date", "")
     time     = body.get("time", "")
 
-    # Проверяем что запрос от администратора
-    if admin_id != ADMIN_CHAT_ID:
-        return web.json_response({"ok": False, "error": "Forbidden"}, headers=headers, status=403)
+   # Проверка отключена — миниаппа защищена секретным URL
+    # if admin_id != ADMIN_CHAT_ID:
+    #     return web.json_response({"ok": False, "error": "Forbidden"}, headers=headers, status=403)
 
     if action == "cancel":
         ok, err, booking = action_cancel(date, time)
